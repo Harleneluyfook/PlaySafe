@@ -1,7 +1,10 @@
 package com.example.playsafe
 
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.media.ToneGenerator
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.ComponentActivity
@@ -25,12 +28,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -48,24 +53,27 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,7 +101,7 @@ fun AppNavigation() {
         composable("safe_steps") { SafeStepsScreen (navController)} // ✅ Updated
         composable("toothy_time") { ToothyTimeScreen(navController) } // ✅ Updated
         composable("bubble_buddy") { BubbleBuddyScreen(navController) } // ✅ Updated
-        composable("rescue_ring") { FeatureDashboardScreen(R.drawable.bg_rescue_ring, navController) }
+        composable("rescue_ring") { RescueDialScreen(navController)}
         composable("menu") { FeatureDashboardScreen(R.drawable.bg_parent_dashboard, navController) }
         composable("avatar") { FeatureDashboardScreen(R.drawable.bg_avatar, navController) }
     }
@@ -811,6 +819,8 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
 
     var currentStep by remember { mutableIntStateOf(0) }
     var gameStarted by remember { mutableStateOf(false) }
+    var carsCleared by remember { mutableStateOf(false) }
+    var playCarsVideo by remember { mutableStateOf(false) }
 
     // MediaPlayers
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -825,11 +835,11 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
     )
 
     val stepAudios = listOf(
-        R.raw.stop,    // step 1
-        R.raw.look,    // step 2
-        R.raw.listen,  // step 3
-        R.raw.cross,   // step 4
-        R.raw.success  // final
+        R.raw.stop,
+        R.raw.look,
+        R.raw.listen,
+        R.raw.cross,
+        R.raw.success
     )
     val startAudio = R.raw.safesteps_start
     val whoopsAudio = R.raw.whoops
@@ -883,17 +893,45 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
     DisposableEffect(Unit) { onDispose { mediaPlayer?.release() } }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Background (change per step)
-        val bgRes = when (currentStep) {
-            1, 2 -> R.drawable.bg_street_cars
-            else -> R.drawable.bg_street
+
+        // Background rendering
+        when {
+            // If LOOK was pressed → play cars video
+            playCarsVideo && !carsCleared -> {
+                AndroidView(
+                    factory = { ctx ->
+                        VideoView(ctx).apply {
+                            setVideoURI("android.resource://${ctx.packageName}/${R.raw.cars_pass}".toUri())
+                            setOnCompletionListener {
+                                carsCleared = true
+                                playCarsVideo = false
+                                currentStep++ // move to LISTEN step automatically
+                            }
+                            start()
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            // Cars visible until cleared
+            !carsCleared && currentStep >= 1 -> {
+                Image(
+                    painter = painterResource(id = R.drawable.bg_street_cars),
+                    contentDescription = "Street with cars",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            // Default clear background
+            else -> {
+                Image(
+                    painter = painterResource(id = R.drawable.bg_street),
+                    contentDescription = "Clear street",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
-        Image(
-            painter = painterResource(id = bgRes),
-            contentDescription = "Background",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
 
         if (!gameStarted) {
             // Start Screen
@@ -907,7 +945,6 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         .clickable { navController?.popBackStack() }
                 )
 
-                // Pulsing Start Button
                 val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
                 val startScale by infiniteTransition.animateFloat(
                     initialValue = 1f, targetValue = 1.2f,
@@ -930,6 +967,8 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         .clickable {
                             gameStarted = true
                             currentStep = 0
+                            carsCleared = false
+                            playCarsVideo = false
                             correctAnswerTrigger = true
                         }
                 )
@@ -951,16 +990,17 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         modifier = Modifier.size(60.dp)
                             .clickable { navController?.popBackStack() }
                     )
-                    LinearProgressIndicator(
-                        progress = { (currentStep + 1) / 5f },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp)
-                            .height(12.dp)
-                    )
                 }
 
-                Spacer(Modifier.height(16.dp))
+                LinearProgressIndicator(
+                    progress = { (currentStep + 1) / 5f },
+                    modifier = Modifier
+                        .fillMaxWidth(0.8f)
+                        .padding(top = 15.dp) // lowered
+                        .height(12.dp)
+                )
+
+                Spacer(Modifier.height(24.dp))
 
                 // Mascot
                 Image(
@@ -975,11 +1015,11 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         )
                 )
 
-                // Dialogue bubble
+                // Dialogue bubble (lighter bg)
                 Box(
                     Modifier.padding(16.dp)
                         .background(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                            Color.White.copy(alpha = 0.8f), // brighter background
                             RoundedCornerShape(16.dp)
                         )
                         .padding(16.dp)
@@ -987,16 +1027,18 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                     Text(
                         text = stepDialogues[currentStep],
                         style = MaterialTheme.typography.titleLarge,
+                        color = Color.Black,
                         textAlign = TextAlign.Center
                     )
                 }
 
                 Spacer(Modifier.height(16.dp))
 
-                // Step Buttons as PNGs
-                Row(
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    modifier = Modifier.fillMaxWidth()
+                // Step Buttons
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp)
                 ) {
                     val btns = listOf(
                         R.drawable.btn_stop to 0,
@@ -1004,49 +1046,343 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         R.drawable.btn_listen to 2,
                         R.drawable.btn_cross to 3
                     )
-                    btns.forEach { (img, idx) ->
-                        Image(
-                            painter = painterResource(id = img),
-                            contentDescription = "Step Button",
-                            modifier = Modifier
-                                .size(120.dp)
-                                .clickable {
-                                    if (idx == currentStep) {
-                                        correctAnswerTrigger = true
-                                        if (idx == 1) {
-                                            // LOOK step → show cars event
-                                            mediaPlayer?.release()
-                                            mediaPlayer =
-                                                MediaPlayer.create(context, waitCarsAudio)
-                                            mediaPlayer?.start()
-                                            // Simulate cars passing
-                                            CoroutineScope(Dispatchers.Main).launch {
-                                                delay(3000)
-                                                currentStep++
+
+                    btns.chunked(2).forEach { row ->
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            row.forEach { (img, idx) ->
+                                var pressed by remember { mutableStateOf(false) }
+
+                                val scale by animateFloatAsState(
+                                    targetValue = if (pressed) 1.2f else 1f,
+                                    animationSpec = tween(300),
+                                    finishedListener = { pressed = false }
+                                )
+
+                                Image(
+                                    painter = painterResource(id = img),
+                                    contentDescription = "Step Button",
+                                    modifier = Modifier
+                                        .size(150.dp)
+                                        .aspectRatio(1f) // prevents distortion
+                                        .graphicsLayer(
+                                            scaleX = scale,
+                                            scaleY = scale,
+                                        )
+                                        .clickable {
+                                            pressed = true
+                                            if (idx == currentStep) {
+                                                correctAnswerTrigger = true
+                                                if (idx == 1) {
+                                                    // LOOK step → play cars video + audio
+                                                    playCarsVideo = true
+                                                    mediaPlayer?.release()
+                                                    mediaPlayer = MediaPlayer.create(context, waitCarsAudio)
+                                                    mediaPlayer?.start()
+                                                } else if (currentStep in 0..2) {
+                                                    // STOP, LISTEN → just go next
+                                                    currentStep++
+                                                } else if (currentStep == 3) {
+                                                    // CROSS step → final
+                                                    mediaPlayer?.release()
+                                                    mediaPlayer = MediaPlayer.create(context, stepAudios[4]) // success audio
+                                                    mediaPlayer?.setOnCompletionListener {
+                                                        Toast.makeText(
+                                                            context,
+                                                            "🎉 Well done crossing safely!",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                        gameStarted = false  // go back to Start screen
+                                                        currentStep = 0
+                                                        carsCleared = false
+                                                        playCarsVideo = false
+                                                    }
+                                                    mediaPlayer?.start()
+                                                }
+                                            } else {
+                                                wrongAnswerTrigger = true
+                                                mediaPlayer?.release()
+                                                mediaPlayer = MediaPlayer.create(context, whoopsAudio)
+                                                mediaPlayer?.start()
                                             }
-                                        } else if (currentStep < 4) {
-                                            currentStep++
-                                        } else {
-                                            // Success
-                                            Toast.makeText(
-                                                context,
-                                                "🎉 Well done crossing safely!",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                            gameStarted = false
                                         }
-                                    } else {
-                                        wrongAnswerTrigger = true
-                                        mediaPlayer?.release()
-                                        mediaPlayer =
-                                            MediaPlayer.create(context, whoopsAudio)
-                                        mediaPlayer?.start()
-                                    }
-                                }
-                        )
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+/* ---------------- RESCUE DIAL FEATURE ---------------- */
+@Composable
+fun RescueDialScreen(navController: NavHostController? = null) {
+    val context = LocalContext.current
+
+    // TextToSpeech
+    val tts = remember {
+        var ttsInstance: TextToSpeech? = null
+        ttsInstance = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                try { ttsInstance?.language = Locale.US } catch (e: Exception) { e.printStackTrace() }
+            }
+        }
+        ttsInstance
+    }
+
+    // Game state
+    var step by remember { mutableIntStateOf(0) } // 0=Start,1=DialPad,2=Calling
+    var input by remember { mutableStateOf("") }
+    var showVideo by remember { mutableStateOf(false) }
+    var mascotShakeTrigger by remember { mutableStateOf(false) }
+    var gameStarted by remember { mutableStateOf(false) }
+
+    // Tone generator
+    val toneGen = remember { ToneGenerator(AudioManager.STREAM_MUSIC, 80) }
+
+    // Mascot animations
+    val mascotShake = remember { Animatable(0f) }
+    val mascotScale = rememberInfiniteTransition().animateFloat(
+        initialValue = 1f, targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
+    )
+
+    val stepDialogues = mapOf(
+        0 to "Tap the numbers to dial 911!",
+        1 to "Tap the numbers to dial 911!",
+        2 to "Calling now..."
+    )
+
+// START AUDIO LOOP
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    LaunchedEffect(gameStarted) {
+        if (!gameStarted) {
+            while (!gameStarted) {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer.create(context, R.raw.rescue_start)
+                mediaPlayer?.start()
+                val duration = mediaPlayer?.duration ?: 0
+                delay(duration.toLong())
+                delay(500L) // optional small gap
+            }
+        } else {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        }
+    }
+    DisposableEffect(Unit) { onDispose { mediaPlayer?.release() } }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Background
+        Image(
+            painter = painterResource(id = R.drawable.background),
+            contentDescription = "Background",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+
+        // Back button
+        Image(
+            painter = painterResource(id = R.drawable.ic_back_arrow),
+            contentDescription = "Back",
+            modifier = Modifier
+                .padding(16.dp)
+                .size(60.dp)
+                .clickable {
+                    step = 0
+                    input = ""
+                    gameStarted = false
+                    navController?.popBackStack()
+                }
+        )
+
+        // START SCREEN
+        if (step == 0 && !gameStarted) {
+            val infiniteTransition = rememberInfiniteTransition()
+            val startScale by infiniteTransition.animateFloat(
+                initialValue = 1f, targetValue = 1.2f,
+                animationSpec = infiniteRepeatable(
+                    tween(1000, easing = LinearEasing),
+                    RepeatMode.Reverse
+                )
+            )
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                // Pulsing start button
+                Image(
+                    painter = painterResource(id = R.drawable.ic_start),
+                    contentDescription = "Start",
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(250.dp)
+                        .graphicsLayer(scaleX = startScale, scaleY = startScale)
+                        .clickable {
+                            gameStarted = true
+                            step = 1
+                            input = ""
+                            tts.speak(
+                                "Let's practice calling emergency numbers!",
+                                TextToSpeech.QUEUE_FLUSH,
+                                null,
+                                UUID.randomUUID().toString()
+                            )
+                        }
+                )
+            }
+        }
+
+        // DIAL PAD
+        if (step == 1) {
+            LaunchedEffect(mascotShakeTrigger) {
+                if (mascotShakeTrigger) {
+                    mascotShake.snapTo(0f)
+                    mascotShake.animateTo(15f, tween(100))
+                    mascotShake.animateTo(-15f, tween(100))
+                    mascotShake.animateTo(0f, tween(100))
+                    mascotShakeTrigger = false
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Mascot + dialogue
+                Image(
+                    painter = painterResource(id = R.drawable.buddy),
+                    contentDescription = "Mascot",
+                    modifier = Modifier
+                        .size(200.dp)
+                        .graphicsLayer(
+                            scaleX = mascotScale.value,
+                            scaleY = mascotScale.value,
+                            rotationZ = mascotShake.value
+                        )
+                )
+                Box(
+                    Modifier
+                        .padding(16.dp)
+                        .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = stepDialogues[step] ?: "",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.Black,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                // Input display
+                Text(
+                    text = input.ifEmpty { "Tap numbers..." },
+                    fontSize = 36.sp,
+                    color = Color.White
+                )
+
+                // Dial pad
+                val rows = listOf(
+                    listOf('1','2','3'),
+                    listOf('4','5','6'),
+                    listOf('7','8','9'),
+                    listOf('*','0','#')
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    rows.forEach { row ->
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                        ) {
+                            row.forEach { digit ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(70.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF3A3A3A))
+                                        .clickable {
+                                            if (input.length < 3) {
+                                                input += digit
+                                                toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                                                tts.speak(digit.toString(), TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                                            }
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = digit.toString(),
+                                        fontSize = 26.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Call button
+                Image(
+                    painter = painterResource(id = R.drawable.dial_button),
+                    contentDescription = "Call",
+                    modifier = Modifier
+                        .size(200.dp)
+                        .align(Alignment.CenterHorizontally)
+                        .clickable {
+                            if (input == "911") {
+                                step = 2
+                                showVideo = true
+                            } else if (input.length == 3) {
+                                mascotShakeTrigger = true
+                                input = ""
+                                tts.speak("Try again!", TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                            }
+                        }
+                )
+            }
+        }
+
+        // FULL SCREEN VIDEO
+        if (step == 2 && showVideo) {
+            AndroidView(
+                factory = {
+                    VideoView(context).apply {
+                        setVideoURI("android.resource://${context.packageName}/${R.raw.call_sequence}".toUri())
+                        setOnCompletionListener {
+                            step = 0
+                            input = ""
+                            gameStarted = false
+                            showVideo = false
+                            Toast.makeText(context, "Well done! You called help!", Toast.LENGTH_SHORT).show()
+                            tts.speak("Well done! You called help!", TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                        }
+                        start()
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
