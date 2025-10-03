@@ -49,7 +49,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -244,26 +243,56 @@ fun FeatureDashboardScreen(bgImage: Int, navController: NavHostController? = nul
 
 /* ---------------- TOOTHY TIME FEATURE ---------------- */
 @Composable
-fun ToothyTimeScreen(navController: NavHostController? = null) {
+fun ToothyTimeScreen(navController: NavHostController) {
     val context = LocalContext.current
 
-    // 🎥 State
+    // State
+    var showStartOverlay by remember { mutableStateOf(true) }
     var videoStarted by remember { mutableStateOf(false) }
     var brushOffset by remember { mutableStateOf(Offset.Zero) }
     var progress by remember { mutableFloatStateOf(0f) }
-    var currentTexts by remember { mutableStateOf(listOf("Time to brush for 2 minutes!")) }
+    var currentTexts by remember { mutableStateOf(listOf("Brush your front teeth in a forward and backward motion - show me your smile!")) }
+    var brushJoltKey by remember { mutableIntStateOf(0) }
+    var stoppedByUser by remember { mutableStateOf(false) }
 
-    // 🎵 Start audio (like Bubble Buddy)
-    val startAudio = remember {
+    // 🎵 Start screen audio
+    val mediaPlayer = remember(showStartOverlay) {
         MediaPlayer.create(context, R.raw.toothy_start).apply {
-            setVolume(1.0f, 1.0f)
+            isLooping = false
         }
     }
 
-    // Timeline with demo + interactive
+    // 🔊 Play audio immediately when overlay shows, then repeat every 5s
+    LaunchedEffect(showStartOverlay) {
+        if (showStartOverlay) {
+            // play right away
+            mediaPlayer.seekTo(0)
+            mediaPlayer.start()
+
+            // then loop every 5s
+            while (showStartOverlay) {
+                delay(5000L)
+                if (!mediaPlayer.isPlaying) {
+                    mediaPlayer.seekTo(0)
+                    mediaPlayer.start()
+                }
+            }
+        } else {
+            if (mediaPlayer.isPlaying) mediaPlayer.pause()
+        }
+    }
+
+    // Cleanup media player
+    DisposableEffect(showStartOverlay) {
+        onDispose {
+            try { mediaPlayer.release() } catch (_: Exception) {}
+        }
+    }
+
+    // Timeline (demo vs brush intervals)
     val brushingTimeline = listOf(
-        BrushingStep(0, 5, listOf("Time to brush for 2 minutes!"), false),
-        BrushingStep(5, 12, listOf("Brush your front teeth in a forward and backward motion - show me your smile!", "Good Job!"), true),
+        BrushingStep(0, 5, listOf("Brush your front teeth in a forward and backward motion - show me your smile!"), false),
+        BrushingStep(5, 12, listOf("Good Job!"), true),
         BrushingStep(12, 19, listOf("Next, brush your upper front teeth in a circular motion!"), false),
         BrushingStep(19, 23, listOf("Keep Brushing!"), true),
         BrushingStep(23, 28, listOf("Now do your lower front teeth! Circle Circle!"), false),
@@ -286,8 +315,9 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
         BrushingStep(120, 122, listOf("Wow! Super clean teeth! Great brushing!"), false)
     )
 
-    // 🎬 Video setup
+    // Video setup
     val videoView = remember { VideoView(context) }
+    var shouldStartAfterPrepared by remember { mutableStateOf(false) }
 
     AndroidView(
         factory = {
@@ -295,7 +325,11 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
                 setVideoURI("android.resource://${context.packageName}/${R.raw.toothy_video}".toUri())
                 setOnPreparedListener { mp ->
                     mp.isLooping = false
-                    if (!videoStarted) pause() // show cover until Start pressed
+                    if (shouldStartAfterPrepared) {
+                        shouldStartAfterPrepared = false
+                        start()
+                        brushJoltKey++
+                    }
                 }
             }
         },
@@ -305,39 +339,39 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
         modifier = Modifier.fillMaxSize()
     )
 
-    // UI overlay
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // 🔙 Back + 📊 Progress
+    // Overlay UI (progress + mascot + dialogue + back)
+    Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Back button → Always dashboard
             Image(
                 painter = painterResource(id = R.drawable.ic_back_arrow),
                 contentDescription = "Back",
                 modifier = Modifier
                     .size(50.dp)
-                    .clickable { navController?.popBackStack() },
-                contentScale = ContentScale.Fit
+                    .clickable {
+                        stoppedByUser = true // 👈 mark as user exit
+                        try { videoView.stopPlayback() } catch (_: Exception) {}
+                        navController.navigate("dashboard") {
+                            popUpTo("dashboard") { inclusive = true }
+                        }
+                    }
             )
 
             Spacer(modifier = Modifier.width(12.dp))
 
             LinearProgressIndicator(
                 progress = { progress },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(10.dp)
+                modifier = Modifier.weight(1f).height(10.dp)
             )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // 🦷 Mascot + dialogue
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -356,7 +390,7 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
                     .padding(16.dp)
             ) {
                 Text(
-                    text = currentTexts.random(),
+                    text = currentTexts.firstOrNull() ?: "",
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center
                 )
@@ -364,55 +398,48 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
         }
     }
 
-    // 🪥 Brush overlay (only interactive steps)
+    // Draggable toothbrush overlay (only during brush steps)
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val posSec = videoView.currentPosition / 1000
         val currentStep = brushingTimeline.find { posSec in it.startSec until it.endSec }
 
+        var lastBrushedStep by remember { mutableStateOf<BrushingStep?>(null) }
+        val popAnim = remember { Animatable(1f) }
+
         if (currentStep?.showBrush == true) {
-            val infiniteTransition = rememberInfiniteTransition(label = "brushPop")
-            val scale by infiniteTransition.animateFloat(
-                initialValue = 1f,
-                targetValue = 1.2f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(500, easing = FastOutSlowInEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
-                label = "scaleAnim"
-            )
+            if (lastBrushedStep != currentStep) {
+                LaunchedEffect(currentStep) {
+                    popAnim.snapTo(1.2f)
+                    popAnim.animateTo(1f, animationSpec = tween(380, easing = FastOutSlowInEasing))
+                }
+            }
 
             Image(
                 painter = painterResource(id = R.drawable.ic_toothbrush),
                 contentDescription = "Toothbrush",
                 modifier = Modifier
-                    .size(150.dp)
+                    .size(220.dp)
                     .graphicsLayer(
                         translationX = brushOffset.x,
                         translationY = brushOffset.y,
-                        scaleX = scale,
-                        scaleY = scale
+                        scaleX = popAnim.value,
+                        scaleY = popAnim.value
                     )
-                    .pointerInput(Unit) {
+                    .pointerInput(currentStep.startSec) {
                         detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                brushOffset += dragAmount
-                            },
-                            onDragEnd = {
-                                if (brushOffset.getDistance() > 400f) brushOffset = Offset.Zero
-                            }
+                            onDrag = { change, dragAmount -> change.consume(); brushOffset += dragAmount },
+                            onDragEnd = { if (brushOffset.getDistance() > 400f) brushOffset = Offset.Zero }
                         )
                     }
             )
         }
     }
 
-    // ▶ Start overlay
-    if (!videoStarted) {
+    // Start overlay
+    // Start overlay with Start button
+    if (showStartOverlay) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.5f)),
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
             val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
@@ -425,40 +452,71 @@ fun ToothyTimeScreen(navController: NavHostController? = null) {
                 ),
                 label = "pulseAnim"
             )
-
             Image(
                 painter = painterResource(id = R.drawable.ic_start),
                 contentDescription = "Start",
                 modifier = Modifier
-                    .size(200.dp)
+                    .size(300.dp)
                     .graphicsLayer(scaleX = scale, scaleY = scale)
                     .clickable {
+                        showStartOverlay = false
                         videoStarted = true
-                        startAudio.start() // 🔊 play "Toothy Time start" sound
+                        stoppedByUser = false
+                        if (mediaPlayer.isPlaying) mediaPlayer.pause() // stop audio on start
                     }
             )
         }
     }
 
-    // 🔄 Sync video + progress + texts
+    // Cleanup media player
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayer.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    // Sync video + progress + dialogues
     LaunchedEffect(videoStarted) {
         if (videoStarted) {
             while (videoView.isPlaying) {
                 val posSec = videoView.currentPosition / 1000
                 progress = posSec / 120f
 
-                brushingTimeline.find { posSec in it.startSec until it.endSec }?.let {
-                    currentTexts = it.texts
+                brushingTimeline.find { posSec in it.startSec until it.endSec }?.let { step ->
+                    currentTexts = step.texts
+                    if (step.showBrush) brushJoltKey++
                 }
 
-                delay(500L)
+                delay(300L)
             }
 
-            // Reset after finish
-            Toast.makeText(context, "🎉 Brushing Complete!", Toast.LENGTH_SHORT).show()
+            val durationSec = videoView.duration / 1000
+            val posSec = videoView.currentPosition / 1000
+            val completed = posSec >= durationSec - 1
+
+            // Reset state
             videoStarted = false
+            showStartOverlay = true
             progress = 0f
             brushOffset = Offset.Zero
+            currentTexts = listOf("Brush your front teeth in a forward and backward motion - show me your smile!")
+
+            // ✅ Only toast if NOT stopped by user
+            if (!stoppedByUser && completed) {
+                Toast.makeText(context, "🎉 Great job! You finished brushing!", Toast.LENGTH_LONG).show()
+            }
+
+            // reset flag for next run
+            stoppedByUser = false
+        }
+    }
+
+    // Cleanup
+    DisposableEffect(Unit) {
+        onDispose {
+            try { videoView.stopPlayback() } catch (_: Exception) {}
         }
     }
 }
@@ -471,6 +529,7 @@ data class BrushingStep(
     val showBrush: Boolean
 )
 
+
 /* ---------------- BUBBLE BUDDY FEATURE ---------------- */
 @Composable
 fun BubbleBuddyScreen(navController: NavHostController? = null) {
@@ -479,7 +538,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
     var currentStep by remember { mutableIntStateOf(0) }
     var gameStarted by remember { mutableStateOf(false) }
 
-    // 🎵 MediaPlayers
+    // MediaPlayers
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
 
     val stepAudios = listOf(
@@ -516,7 +575,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
         R.drawable.ic_step8
     )
 
-    // 🪄 Animation states
+    // Animation states
     var correctAnswerTrigger by remember { mutableStateOf(false) }
     var wrongAnswerTrigger by remember { mutableStateOf(false) }
 
@@ -537,7 +596,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
         }
     }
 
-    // 🔁 Start audio loop
+    // Start audio loop
     LaunchedEffect(gameStarted) {
         if (!gameStarted) {
             while (true) {
@@ -555,7 +614,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
         }
     }
 
-    // 🔊 Play step audio
+    // Play step audio
     LaunchedEffect(currentStep, gameStarted) {
         if (gameStarted) {
             mediaPlayer?.release()
@@ -575,7 +634,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
         )
 
         if (!gameStarted) {
-            // ▶ Start Screen
+            // Start Screen
             Box(modifier = Modifier.fillMaxSize()) {
                 Image(
                     painter = painterResource(id = R.drawable.ic_back_arrow),
@@ -598,7 +657,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                             currentStep = 0
                         }
                 )
-                // ✨ Start button pulsing animation
+                // Start button pulsing animation
                 val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
                 val startScale by infiniteTransition.animateFloat(
                     initialValue = 1f,
@@ -627,7 +686,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                 )
             }
         } else {
-            // 🌟 Game Screen
+            // Game Screen
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
