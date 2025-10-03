@@ -62,7 +62,10 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,8 +90,7 @@ fun AppNavigation() {
     val navController = rememberNavController()
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("dashboard") { DashboardScreen(navController) }
-        composable("safe_steps") { FeatureDashboardScreen(R.drawable.bg_safe_steps, navController) }
-        composable("bubble_buddy") { FeatureDashboardScreen(R.drawable.bg_bubble_buddy, navController) }
+        composable("safe_steps") { SafeStepsScreen (navController)} // ✅ Updated
         composable("toothy_time") { ToothyTimeScreen(navController) } // ✅ Updated
         composable("bubble_buddy") { BubbleBuddyScreen(navController) } // ✅ Updated
         composable("rescue_ring") { FeatureDashboardScreen(R.drawable.bg_rescue_ring, navController) }
@@ -795,6 +797,253 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                                     }
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* ---------------- SAFE STEPS FEATURE ---------------- */
+@Composable
+fun SafeStepsScreen(navController: NavHostController? = null) {
+    val context = LocalContext.current
+
+    var currentStep by remember { mutableIntStateOf(0) }
+    var gameStarted by remember { mutableStateOf(false) }
+
+    // MediaPlayers
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    // Step dialogues + audios
+    val stepDialogues = listOf(
+        "First things first – we STOP! Never run into the street. Tap the red STOP button to show me you know how to stop.",
+        "Great stopping! Now we LOOK both ways. Left, then right, then left again. Tap the LOOK button to check for cars.",
+        "Good looking! Now close your eyes and LISTEN. Do you hear any cars? Tap LISTEN to practice using your ears.",
+        "Perfect! No cars are coming. Now we can CROSS safely. Tap the green CROSS button to walk across.",
+        "You did it! You followed all the safety steps: STOP, LOOK, LISTEN, CROSS! You’re a street safety expert!"
+    )
+
+    val stepAudios = listOf(
+        R.raw.stop,    // step 1
+        R.raw.look,    // step 2
+        R.raw.listen,  // step 3
+        R.raw.cross,   // step 4
+        R.raw.success  // final
+    )
+    val startAudio = R.raw.safesteps_start
+    val whoopsAudio = R.raw.whoops
+    val waitCarsAudio = R.raw.during_look
+
+    // Animation triggers
+    var correctAnswerTrigger by remember { mutableStateOf(false) }
+    var wrongAnswerTrigger by remember { mutableStateOf(false) }
+
+    val mascotScale by animateFloatAsState(
+        targetValue = if (correctAnswerTrigger) 1.2f else 1f,
+        animationSpec = tween(400, easing = LinearOutSlowInEasing),
+        finishedListener = { correctAnswerTrigger = false }
+    )
+
+    val mascotShake = remember { Animatable(0f) }
+    LaunchedEffect(wrongAnswerTrigger) {
+        if (wrongAnswerTrigger) {
+            mascotShake.snapTo(0f)
+            mascotShake.animateTo(20f, tween(100))
+            mascotShake.animateTo(-20f, tween(100))
+            mascotShake.animateTo(0f, tween(100))
+            wrongAnswerTrigger = false
+        }
+    }
+
+    // Start screen audio loop
+    LaunchedEffect(gameStarted) {
+        if (!gameStarted) {
+            while (true) {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer.create(context, startAudio)
+                mediaPlayer?.start()
+                delay((mediaPlayer?.duration ?: 0).toLong() + 3000)
+            }
+        } else {
+            mediaPlayer?.release()
+            mediaPlayer = null
+        }
+    }
+
+    // Auto play audio when step changes
+    LaunchedEffect(currentStep, gameStarted) {
+        if (gameStarted && currentStep in stepAudios.indices) {
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(context, stepAudios[currentStep])
+            mediaPlayer?.start()
+        }
+    }
+
+    DisposableEffect(Unit) { onDispose { mediaPlayer?.release() } }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Background (change per step)
+        val bgRes = when (currentStep) {
+            1, 2 -> R.drawable.bg_street_cars
+            else -> R.drawable.bg_street
+        }
+        Image(
+            painter = painterResource(id = bgRes),
+            contentDescription = "Background",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        if (!gameStarted) {
+            // Start Screen
+            Box(modifier = Modifier.fillMaxSize()) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_back_arrow),
+                    contentDescription = "Back",
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .size(60.dp)
+                        .clickable { navController?.popBackStack() }
+                )
+
+                // Pulsing Start Button
+                val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
+                val startScale by infiniteTransition.animateFloat(
+                    initialValue = 1f, targetValue = 1.2f,
+                    animationSpec = infiniteRepeatable(
+                        tween(1000, easing = LinearEasing),
+                        RepeatMode.Reverse
+                    ), label = "startScale"
+                )
+
+                Image(
+                    painter = painterResource(id = R.drawable.ic_start),
+                    contentDescription = "Start",
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(250.dp)
+                        .graphicsLayer(
+                            scaleX = startScale,
+                            scaleY = startScale
+                        )
+                        .clickable {
+                            gameStarted = true
+                            currentStep = 0
+                            correctAnswerTrigger = true
+                        }
+                )
+            }
+        } else {
+            // Game Screen
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Exit + Progress
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_back_arrow),
+                        contentDescription = "Exit",
+                        modifier = Modifier.size(60.dp)
+                            .clickable { navController?.popBackStack() }
+                    )
+                    LinearProgressIndicator(
+                        progress = { (currentStep + 1) / 5f },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp)
+                            .height(12.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Mascot
+                Image(
+                    painter = painterResource(id = R.drawable.safestep_mascot),
+                    contentDescription = "Mascot",
+                    modifier = Modifier
+                        .size(200.dp)
+                        .graphicsLayer(
+                            scaleX = mascotScale,
+                            scaleY = mascotScale,
+                            rotationZ = mascotShake.value
+                        )
+                )
+
+                // Dialogue bubble
+                Box(
+                    Modifier.padding(16.dp)
+                        .background(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = stepDialogues[currentStep],
+                        style = MaterialTheme.typography.titleLarge,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Step Buttons as PNGs
+                Row(
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val btns = listOf(
+                        R.drawable.btn_stop to 0,
+                        R.drawable.btn_look to 1,
+                        R.drawable.btn_listen to 2,
+                        R.drawable.btn_cross to 3
+                    )
+                    btns.forEach { (img, idx) ->
+                        Image(
+                            painter = painterResource(id = img),
+                            contentDescription = "Step Button",
+                            modifier = Modifier
+                                .size(120.dp)
+                                .clickable {
+                                    if (idx == currentStep) {
+                                        correctAnswerTrigger = true
+                                        if (idx == 1) {
+                                            // LOOK step → show cars event
+                                            mediaPlayer?.release()
+                                            mediaPlayer =
+                                                MediaPlayer.create(context, waitCarsAudio)
+                                            mediaPlayer?.start()
+                                            // Simulate cars passing
+                                            CoroutineScope(Dispatchers.Main).launch {
+                                                delay(3000)
+                                                currentStep++
+                                            }
+                                        } else if (currentStep < 4) {
+                                            currentStep++
+                                        } else {
+                                            // Success
+                                            Toast.makeText(
+                                                context,
+                                                "🎉 Well done crossing safely!",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            gameStarted = false
+                                        }
+                                    } else {
+                                        wrongAnswerTrigger = true
+                                        mediaPlayer?.release()
+                                        mediaPlayer =
+                                            MediaPlayer.create(context, whoopsAudio)
+                                        mediaPlayer?.start()
+                                    }
+                                }
+                        )
                     }
                 }
             }
