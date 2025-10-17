@@ -19,10 +19,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,12 +38,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,12 +64,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -61,19 +79,52 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.UUID
+
+
+// Feature state and ViewModel
+data class FeatureState(
+    val playCount: Int = 0,
+    val completed: Boolean = false
+)
+
+class FeatureViewModel : ViewModel() {
+    // mutableStateListOf so Compose observes changes
+    var features = mutableStateListOf(
+        FeatureState(), FeatureState(), FeatureState(), FeatureState()
+    )
+
+    // call this when a feature finishes normally
+    fun markCompleted(index: Int) {
+        if (index in features.indices) {
+            val f = features[index]
+            features[index] = f.copy(playCount = f.playCount + 1, completed = true)
+        }
+    }
+
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -96,14 +147,51 @@ fun PlaySafeApp() {
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
+    val featureViewModel: FeatureViewModel = viewModel() // single instance for all screens
+
     NavHost(navController = navController, startDestination = "dashboard") {
         composable("dashboard") { DashboardScreen(navController) }
-        composable("safe_steps") { SafeStepsScreen (navController)} // ✅ Updated
-        composable("toothy_time") { ToothyTimeScreen(navController) } // ✅ Updated
-        composable("bubble_buddy") { BubbleBuddyScreen(navController) } // ✅ Updated
-        composable("rescue_ring") { RescueDialScreen(navController)}
-        composable("menu") { FeatureDashboardScreen(R.drawable.bg_parent_dashboard, navController) }
-        composable("avatar") { FeatureDashboardScreen(R.drawable.bg_avatar, navController) }
+
+        composable("safe_steps") {
+            SafeStepsScreen(
+                navController = navController,
+                featureIndex = 0,
+                featureViewModel = featureViewModel
+            )
+        }
+
+        composable("toothy_time") {
+            ToothyTimeScreen(
+                navController = navController,
+                featureIndex = 1,
+                featureViewModel = featureViewModel
+            )
+        }
+
+        composable("bubble_buddy") {
+            BubbleBuddyScreen(
+                navController = navController,
+                featureIndex = 2,
+                featureViewModel = featureViewModel
+            )
+        }
+
+        composable("rescue_ring") {
+            RescueDialScreen(
+                navController = navController,
+                featureIndex = 3,
+                featureViewModel = featureViewModel
+            )
+        }
+
+        composable("menu") {
+            ParentDashboardScreen(
+                featureViewModel = featureViewModel,
+                navController = navController
+            )
+        }
+
+        composable("avatar") { AvatarScreen(navController) }
     }
 }
 
@@ -118,9 +206,11 @@ fun DashboardScreen(navController: NavHostController) {
             contentScale = ContentScale.Crop
         )
 
+        // Make everything scrollable
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState()) // ✅ Added scroll
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -224,82 +314,45 @@ fun DashboardIcon(
     )
 }
 
+/* ---------------- BUBBLE BUDDY FEATURE ---------------- */
 @Composable
-fun FeatureDashboardScreen(bgImage: Int, navController: NavHostController? = null) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Image(
-            painter = painterResource(id = bgImage),
-            contentDescription = "Feature background",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            Image(
-                painter = painterResource(id = R.drawable.ic_back_arrow),
-                contentDescription = "Back",
-                modifier = Modifier
-                    .size(90.dp)
-                    .clickable { navController?.popBackStack() },
-                contentScale = ContentScale.Fit
-            )
-        }
-    }
-}
-
-/* ---------------- TOOTHY TIME FEATURE ---------------- */
-@Composable
-fun ToothyTimeScreen(navController: NavHostController) {
+fun ToothyTimeScreen(
+    navController: NavHostController,
+    featureIndex: Int,
+    featureViewModel: FeatureViewModel
+) {
     val context = LocalContext.current
 
-    // State
+    // 🎬 States
     var showStartOverlay by remember { mutableStateOf(true) }
     var videoStarted by remember { mutableStateOf(false) }
     var brushOffset by remember { mutableStateOf(Offset.Zero) }
-    var progress by remember { mutableFloatStateOf(0f) }
-    var currentTexts by remember { mutableStateOf(listOf("Brush your front teeth in a forward and backward motion - show me your smile!")) }
-    var brushJoltKey by remember { mutableIntStateOf(0) }
-    var stoppedByUser by remember { mutableStateOf(false) }
+    var brushingProgress by remember { mutableFloatStateOf(0f) }
+    var currentTexts by remember { mutableStateOf(listOf("")) }
+    var isDragging by remember { mutableStateOf(false) }
 
-    // 🎵 Start screen audio
-    val mediaPlayer = remember(showStartOverlay) {
-        MediaPlayer.create(context, R.raw.toothy_start).apply {
-            isLooping = false
-        }
+    // NEW: Separate state to track completion
+    var gameCompleted by remember { mutableStateOf(false) }
+
+    // 🎵 Intro audio
+    val mediaPlayer = remember {
+        MediaPlayer.create(context, R.raw.toothy_start).apply { isLooping = false }
     }
 
-    // 🔊 Play audio immediately when overlay shows, then repeat every 5s
     LaunchedEffect(showStartOverlay) {
         if (showStartOverlay) {
-            // play right away
             mediaPlayer.seekTo(0)
             mediaPlayer.start()
-
-            // then loop every 5s
-            while (showStartOverlay) {
-                delay(5000L)
-                if (!mediaPlayer.isPlaying) {
-                    mediaPlayer.seekTo(0)
-                    mediaPlayer.start()
-                }
-            }
-        } else {
-            if (mediaPlayer.isPlaying) mediaPlayer.pause()
+        } else if (mediaPlayer.isPlaying) {
+            mediaPlayer.pause()
         }
     }
 
-    // Cleanup media player
-    DisposableEffect(showStartOverlay) {
-        onDispose {
-            try { mediaPlayer.release() } catch (_: Exception) {}
-        }
+    DisposableEffect(Unit) {
+        onDispose { try { mediaPlayer.release() } catch (_: Exception) {} }
     }
 
-    // Timeline (demo vs brush intervals)
+    // 🦷 Timeline
     val brushingTimeline = listOf(
         BrushingStep(0, 5, listOf("Brush your front teeth in a forward and backward motion - show me your smile!"), false),
         BrushingStep(5, 12, listOf("Good Job!"), true),
@@ -311,7 +364,7 @@ fun ToothyTimeScreen(navController: NavHostController) {
         BrushingStep(37, 41, listOf("Keep Brushing!"), true),
         BrushingStep(41, 46, listOf("Now brush the right side of your teeth! Up and Down!"), false),
         BrushingStep(46, 52, listOf("Great Work!"), true),
-        BrushingStep(52, 57, listOf("Brush the chewing surface of your lower teeth! Lets start with the right side!"), false),
+        BrushingStep(52, 57, listOf("Brush the chewing surface of your lower teeth! Let's start with the right side!"), false),
         BrushingStep(57, 62, listOf("Keep Brushing!"), true),
         BrushingStep(62, 68, listOf("Do the other side! Brush your left!"), false),
         BrushingStep(68, 73, listOf("Good Job!"), true),
@@ -319,15 +372,19 @@ fun ToothyTimeScreen(navController: NavHostController) {
         BrushingStep(80, 86, listOf("You can do it!"), true),
         BrushingStep(86, 93, listOf("Do the other side! Brush your right!"), false),
         BrushingStep(93, 99, listOf("Nice Work!"), true),
-        BrushingStep(99, 106, listOf("Don’t forget to brush your tongue! Brush it up and down!"), false),
+        BrushingStep(99, 106, listOf("Don't forget to brush your tongue! Brush it up and down!"), false),
         BrushingStep(106, 112, listOf("Keep Brushing!"), true),
         BrushingStep(113, 120, listOf("Lastly, rinse out your mouth with clean water!"), false),
         BrushingStep(120, 122, listOf("Wow! Super clean teeth! Great brushing!"), false)
     )
 
-    // Video setup
+    val brushingOnlyDuration = brushingTimeline
+        .filter { it.showBrush }
+        .sumOf { (it.endSec - it.startSec).toDouble() }
+        .toFloat()
+
+    // 🎥 Video setup
     val videoView = remember { VideoView(context) }
-    var shouldStartAfterPrepared by remember { mutableStateOf(false) }
 
     AndroidView(
         factory = {
@@ -335,21 +392,87 @@ fun ToothyTimeScreen(navController: NavHostController) {
                 setVideoURI("android.resource://${context.packageName}/${R.raw.toothy_video}".toUri())
                 setOnPreparedListener { mp ->
                     mp.isLooping = false
-                    if (shouldStartAfterPrepared) {
-                        shouldStartAfterPrepared = false
-                        start()
-                        brushJoltKey++
-                    }
+                    if (videoStarted) start()
+                }
+                // NEW: Add completion listener
+                setOnCompletionListener {
+                    gameCompleted = true
                 }
             }
         },
         update = { view ->
-            if (videoStarted && !view.isPlaying) view.start()
+            if (videoStarted && !view.isPlaying && !showStartOverlay) {
+                view.start()
+            }
         },
         modifier = Modifier.fillMaxSize()
     )
 
-    // Overlay UI (progress + mascot + dialogue + back)
+    // NEW: Handle game completion separately
+    LaunchedEffect(gameCompleted) {
+        if (gameCompleted) {
+            // Stop video immediately
+            try { videoView.pause() } catch (_: Exception) {}
+
+            // Mark as completed in ViewModel
+            featureViewModel.markCompleted(featureIndex)
+
+            // Show toast
+            Toast.makeText(context, "🎉 Great job! You finished brushing!", Toast.LENGTH_LONG).show()
+
+            // Wait a bit for toast to be visible
+            delay(500L)
+
+            // Reset all states to return to start screen
+            showStartOverlay = true
+            videoStarted = false
+            isDragging = false
+            brushingProgress = 0f
+            brushOffset = Offset.Zero
+            currentTexts = listOf("")
+            gameCompleted = false
+
+            // Stop video playback completely
+            try { videoView.stopPlayback() } catch (_: Exception) {}
+        }
+    }
+
+    // 🔁 Timeline tracking (SIMPLIFIED - only track progress, not completion)
+    LaunchedEffect(videoStarted) {
+        if (!videoStarted) return@LaunchedEffect
+
+        var brushedSeconds = 0f
+        var previousStep: BrushingStep? = null
+
+        while (videoStarted && !showStartOverlay && !gameCompleted) {
+            val posSec = try { videoView.currentPosition / 1000f } catch (_: Exception) { 0f }
+            val currentStep = brushingTimeline.find { posSec >= it.startSec && posSec < it.endSec }
+
+            if (currentStep != null) {
+                currentTexts = currentStep.texts
+
+                if (previousStep?.showBrush == true && !currentStep.showBrush) {
+                    brushOffset = Offset.Zero
+                    isDragging = false
+                }
+
+                if (currentStep.showBrush) {
+                    if (!isDragging && videoView.isPlaying) videoView.pause()
+                    else if (isDragging && !videoView.isPlaying) videoView.start()
+
+                    if (isDragging) {
+                        brushedSeconds = (brushedSeconds + 0.3f).coerceAtMost(brushingOnlyDuration)
+                        brushingProgress = brushedSeconds / brushingOnlyDuration
+                    }
+                }
+                previousStep = currentStep
+            }
+
+            delay(300L)
+        }
+    }
+
+    // 🧭 Progress + top bar
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -357,14 +480,12 @@ fun ToothyTimeScreen(navController: NavHostController) {
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Back button → Always dashboard
             Image(
                 painter = painterResource(id = R.drawable.ic_back_arrow),
                 contentDescription = "Back",
                 modifier = Modifier
                     .size(50.dp)
                     .clickable {
-                        stoppedByUser = true // 👈 mark as user exit
                         try { videoView.stopPlayback() } catch (_: Exception) {}
                         navController.navigate("dashboard") {
                             popUpTo("dashboard") { inclusive = true }
@@ -375,8 +496,13 @@ fun ToothyTimeScreen(navController: NavHostController) {
             Spacer(modifier = Modifier.width(12.dp))
 
             LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.weight(1f).height(10.dp)
+            progress = { brushingProgress },
+            modifier = Modifier
+                                .weight(1f)
+                                .height(10.dp),
+            color = ProgressIndicatorDefaults.linearColor,
+            trackColor = ProgressIndicatorDefaults.linearTrackColor,
+            strokeCap = ProgressIndicatorDefaults.LinearStrokeCap,
             )
         }
 
@@ -391,9 +517,7 @@ fun ToothyTimeScreen(navController: NavHostController) {
                 contentDescription = "Mascot",
                 modifier = Modifier.size(140.dp)
             )
-
             Spacer(modifier = Modifier.height(8.dp))
-
             Box(
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
@@ -408,22 +532,12 @@ fun ToothyTimeScreen(navController: NavHostController) {
         }
     }
 
-    // Draggable toothbrush overlay (only during brush steps)
+    // 🪥 Draggable toothbrush
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val posSec = videoView.currentPosition / 1000
-        val currentStep = brushingTimeline.find { posSec in it.startSec until it.endSec }
-
-        var lastBrushedStep by remember { mutableStateOf<BrushingStep?>(null) }
-        val popAnim = remember { Animatable(1f) }
+        val posSec = (try { videoView.currentPosition } catch (_: Exception) { 0 }) / 1000f
+        val currentStep = brushingTimeline.find { posSec >= it.startSec && posSec < it.endSec }
 
         if (currentStep?.showBrush == true) {
-            if (lastBrushedStep != currentStep) {
-                LaunchedEffect(currentStep) {
-                    popAnim.snapTo(1.2f)
-                    popAnim.animateTo(1f, animationSpec = tween(380, easing = FastOutSlowInEasing))
-                }
-            }
-
             Image(
                 painter = painterResource(id = R.drawable.ic_toothbrush),
                 contentDescription = "Toothbrush",
@@ -431,22 +545,27 @@ fun ToothyTimeScreen(navController: NavHostController) {
                     .size(220.dp)
                     .graphicsLayer(
                         translationX = brushOffset.x,
-                        translationY = brushOffset.y,
-                        scaleX = popAnim.value,
-                        scaleY = popAnim.value
+                        translationY = brushOffset.y
                     )
                     .pointerInput(currentStep.startSec) {
                         detectDragGestures(
-                            onDrag = { change, dragAmount -> change.consume(); brushOffset += dragAmount },
-                            onDragEnd = { if (brushOffset.getDistance() > 400f) brushOffset = Offset.Zero }
+                            onDragStart = { isDragging = true },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                brushOffset += dragAmount
+                            },
+                            onDragEnd = {
+                                isDragging = false
+                                brushOffset = Offset.Zero
+                                if (videoView.isPlaying) videoView.pause()
+                            }
                         )
                     }
             )
         }
     }
 
-    // Start overlay
-    // Start overlay with Start button
+    // 🟢 Start overlay
     if (showStartOverlay) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -462,6 +581,7 @@ fun ToothyTimeScreen(navController: NavHostController) {
                 ),
                 label = "pulseAnim"
             )
+
             Image(
                 painter = painterResource(id = R.drawable.ic_start),
                 contentDescription = "Start",
@@ -471,62 +591,19 @@ fun ToothyTimeScreen(navController: NavHostController) {
                     .clickable {
                         showStartOverlay = false
                         videoStarted = true
-                        stoppedByUser = false
-                        if (mediaPlayer.isPlaying) mediaPlayer.pause() // stop audio on start
+                        brushOffset = Offset.Zero
+                        brushingProgress = 0f
+                        if (mediaPlayer.isPlaying) mediaPlayer.pause()
+                        gameCompleted = false
                     }
             )
         }
     }
 
-    // Cleanup media player
-    DisposableEffect(Unit) {
-        onDispose {
-            try {
-                mediaPlayer.release()
-            } catch (_: Exception) {}
-        }
-    }
-
-    // Sync video + progress + dialogues
-    LaunchedEffect(videoStarted) {
-        if (videoStarted) {
-            while (videoView.isPlaying) {
-                val posSec = videoView.currentPosition / 1000
-                progress = posSec / 120f
-
-                brushingTimeline.find { posSec in it.startSec until it.endSec }?.let { step ->
-                    currentTexts = step.texts
-                    if (step.showBrush) brushJoltKey++
-                }
-
-                delay(300L)
-            }
-
-            val durationSec = videoView.duration / 1000
-            val posSec = videoView.currentPosition / 1000
-            val completed = posSec >= durationSec - 1
-
-            // Reset state
-            videoStarted = false
-            showStartOverlay = true
-            progress = 0f
-            brushOffset = Offset.Zero
-            currentTexts = listOf("Brush your front teeth in a forward and backward motion - show me your smile!")
-
-            // ✅ Only toast if NOT stopped by user
-            if (!stoppedByUser && completed) {
-                Toast.makeText(context, "🎉 Great job! You finished brushing!", Toast.LENGTH_LONG).show()
-            }
-
-            // reset flag for next run
-            stoppedByUser = false
-        }
-    }
-
-    // Cleanup
     DisposableEffect(Unit) {
         onDispose {
             try { videoView.stopPlayback() } catch (_: Exception) {}
+            try { mediaPlayer.release() } catch (_: Exception) {}
         }
     }
 }
@@ -539,14 +616,18 @@ data class BrushingStep(
     val showBrush: Boolean
 )
 
-
 /* ---------------- BUBBLE BUDDY FEATURE ---------------- */
 @Composable
-fun BubbleBuddyScreen(navController: NavHostController? = null) {
+fun BubbleBuddyScreen(navController: NavHostController,
+                      featureIndex: Int,
+                      featureViewModel: FeatureViewModel) {
     val context = LocalContext.current
 
     var currentStep by remember { mutableIntStateOf(0) }
     var gameStarted by remember { mutableStateOf(false) }
+
+    // NEW: Track completed steps separately for progress
+    var completedSteps by remember { mutableIntStateOf(0) }
 
     // MediaPlayers
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -588,6 +669,9 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
     // Animation states
     var correctAnswerTrigger by remember { mutableStateOf(false) }
     var wrongAnswerTrigger by remember { mutableStateOf(false) }
+
+    // NEW: Track which image is being pressed for better feedback
+    var pressedImage by remember { mutableStateOf<Int?>(null) }
 
     val mascotScale by animateFloatAsState(
         targetValue = if (correctAnswerTrigger) 1.2f else 1f,
@@ -652,28 +736,17 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                     modifier = Modifier
                         .padding(16.dp)
                         .size(60.dp)
-                        .clickable { navController?.popBackStack() },
+                        .clickable { navController.popBackStack() },
                     contentScale = ContentScale.Fit
                 )
 
-                Image(
-                    painter = painterResource(id = R.drawable.ic_start),
-                    contentDescription = "Start",
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(300.dp)
-                        .clickable {
-                            gameStarted = true
-                            currentStep = 0
-                        }
-                )
                 // Start button pulsing animation
                 val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
                 val startScale by infiniteTransition.animateFloat(
                     initialValue = 1f,
                     targetValue = 1.2f,
                     animationSpec = infiniteRepeatable(
-                        animation = tween(1000, easing = LinearEasing), // speed of pulse
+                        animation = tween(1000, easing = LinearEasing),
                         repeatMode = RepeatMode.Reverse
                     ),
                     label = "startScale"
@@ -692,6 +765,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                         .clickable {
                             gameStarted = true
                             currentStep = 0
+                            completedSteps = 0 // NEW: Reset progress when starting
                         }
                 )
             }
@@ -714,14 +788,14 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                         contentDescription = "Exit",
                         modifier = Modifier
                             .size(60.dp)
-                            .clickable { navController?.popBackStack() },
+                            .clickable { navController.popBackStack() },
                         contentScale = ContentScale.Fit
                     )
                 }
 
-                // Progress
+                // Progress - FIXED: Use completedSteps instead of currentStep
                 LinearProgressIndicator(
-                    progress = { (currentStep + 1) / steps.size.toFloat() },
+                    progress = { completedSteps / steps.size.toFloat() },
                     modifier = Modifier
                         .fillMaxWidth(0.8f)
                         .height(12.dp)
@@ -763,7 +837,7 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                 // 👉 Choices: correct + 1 wrong (stable per step)
                 val correctImage = stepImages[currentStep]
 
-                // pick a wrong image that’s not the correct one, rotating each step
+                // pick a wrong image that's not the correct one, rotating each step
                 val wrongImage = stepImages[(currentStep + 1) % stepImages.size]
 
                 // shuffle once per step, no reshuffle on wrong answers
@@ -778,14 +852,45 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                 ) {
                     options.forEach { img ->
                         key("$currentStep-$img") {
-                            Image(
-                                painter = painterResource(id = img),
-                                contentDescription = "Option",
+                            // NEW: Enhanced clickable hand images with visual feedback
+                            Box(
                                 modifier = Modifier
-                                    .size(150.dp)
-                                    .clickable {
+                                    .size(180.dp) // Slightly larger for better touch target
+                                    .shadow(
+                                        elevation = if (pressedImage == img) 4.dp else 8.dp,
+                                        shape = RoundedCornerShape(16.dp)
+                                    )
+                                    .background(
+                                        color = if (pressedImage == img)
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                                        else
+                                            MaterialTheme.colorScheme.background.copy(alpha = 0.8f),
+                                        shape = RoundedCornerShape(16.dp)
+                                    )
+                                    .border(
+                                        width = if (pressedImage == img) 3.dp else 2.dp,
+                                        color = if (pressedImage == img)
+                                            MaterialTheme.colorScheme.primary
+                                        else
+                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                        shape = RoundedCornerShape(16.dp)
+                                    )
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null // Remove default ripple
+                                    ) {
+                                        pressedImage = img
+                                        // Reset pressed state after a short delay
+                                        CoroutineScope(Dispatchers.Main).launch {
+                                            delay(150)
+                                            pressedImage = null
+                                        }
+
                                         if (img == correctImage) {
                                             correctAnswerTrigger = true
+                                            // NEW: Update progress only when correct button is selected
+                                            completedSteps = currentStep + 1
+
                                             if (currentStep < steps.lastIndex) {
                                                 currentStep++
                                             } else {
@@ -794,7 +899,10 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                                                     "🎉 Great job! Hands are clean!",
                                                     Toast.LENGTH_SHORT
                                                 ).show()
+                                                featureViewModel.markCompleted(featureIndex)
                                                 gameStarted = false
+                                                // NEW: Reset progress when game ends
+                                                completedSteps = 0
                                             }
                                         } else {
                                             wrongAnswerTrigger = true
@@ -802,8 +910,21 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
                                             mediaPlayer = MediaPlayer.create(context, wrongAudio)
                                             mediaPlayer?.start()
                                         }
-                                    }
-                            )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Image(
+                                    painter = painterResource(id = img),
+                                    contentDescription = "Hand washing step option",
+                                    modifier = Modifier
+                                        .size(150.dp)
+                                        .graphicsLayer {
+                                            scaleX = if (pressedImage == img) 0.9f else 1f
+                                            scaleY = if (pressedImage == img) 0.9f else 1f
+                                        },
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
                         }
                     }
                 }
@@ -814,7 +935,11 @@ fun BubbleBuddyScreen(navController: NavHostController? = null) {
 
 /* ---------------- SAFE STEPS FEATURE ---------------- */
 @Composable
-fun SafeStepsScreen(navController: NavHostController? = null) {
+fun SafeStepsScreen(
+    navController: NavHostController,
+    featureIndex: Int,
+    featureViewModel: FeatureViewModel
+) {
     val context = LocalContext.current
 
     var currentStep by remember { mutableIntStateOf(0) }
@@ -822,16 +947,28 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
     var carsCleared by remember { mutableStateOf(false) }
     var playCarsVideo by remember { mutableStateOf(false) }
 
-    // MediaPlayers
-    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    // NEW: Track completed steps separately for progress
+    var completedSteps by remember { mutableIntStateOf(0) }
 
-    // Step dialogues + audios
+    var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+    var isAudioPlaying by remember { mutableStateOf(false) } // 🔒 prevent skipping
+
+    // COLOR-CODED step dialogues with highlighted keywords
     val stepDialogues = listOf(
-        "First things first – we STOP! Never run into the street. Tap the red STOP button to show me you know how to stop.",
-        "Great stopping! Now we LOOK both ways. Left, then right, then left again. Tap the LOOK button to check for cars.",
-        "Good looking! Now close your eyes and LISTEN. Do you hear any cars? Tap LISTEN to practice using your ears.",
-        "Perfect! No cars are coming. Now we can CROSS safely. Tap the green CROSS button to walk across.",
-        "You did it! You followed all the safety steps: STOP, LOOK, LISTEN, CROSS! You’re a street safety expert!"
+        "First things first – we <color>STOP</color>! Never run into the street. Tap the red STOP button to show me you know how to stop.",
+        "Great stopping! Now we <color>LOOK</color> both ways. Left, then right, then left again. Tap the LOOK button to check for cars.",
+        "Good looking! Now close your eyes and <color>LISTEN</color>. Do you hear any cars? Tap LISTEN to practice using your ears.",
+        "Perfect! No cars are coming. Now we can <color>CROSS</color> safely. Tap the green CROSS button to walk across.",
+        "You did it! You followed all the safety steps: <color>STOP</color>, <color>LOOK</color>, <color>LISTEN</color>, <color>CROSS</color>! You're a street safety expert!"
+    )
+
+    // Colors for each step keyword
+    val stepColors = listOf(
+        Color(0xFFF44336), // Red for STOP
+        Color(0xFFFF9800), // Orange for LOOK
+        Color(0xFF2196F3), // Blue for LISTEN
+        Color(0xFF4CAF50), // Green for CROSS
+        Color(0xFF9C27B0)  // Purple for success message
     )
 
     val stepAudios = listOf(
@@ -845,7 +982,6 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
     val whoopsAudio = R.raw.whoops
     val waitCarsAudio = R.raw.during_look
 
-    // Animation triggers
     var correctAnswerTrigger by remember { mutableStateOf(false) }
     var wrongAnswerTrigger by remember { mutableStateOf(false) }
 
@@ -886,6 +1022,10 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
         if (gameStarted && currentStep in stepAudios.indices) {
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer.create(context, stepAudios[currentStep])
+            isAudioPlaying = true
+            mediaPlayer?.setOnCompletionListener {
+                isAudioPlaying = false
+            }
             mediaPlayer?.start()
         }
     }
@@ -896,7 +1036,6 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
 
         // Background rendering
         when {
-            // If LOOK was pressed → play cars video
             playCarsVideo && !carsCleared -> {
                 AndroidView(
                     factory = { ctx ->
@@ -905,7 +1044,9 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                             setOnCompletionListener {
                                 carsCleared = true
                                 playCarsVideo = false
-                                currentStep++ // move to LISTEN step automatically
+                                currentStep++
+                                // NEW: Update progress after cars video completes
+                                completedSteps = currentStep
                             }
                             start()
                         }
@@ -913,7 +1054,7 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            // Cars visible until cleared
+
             !carsCleared && currentStep >= 1 -> {
                 Image(
                     painter = painterResource(id = R.drawable.bg_street_cars),
@@ -922,7 +1063,7 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            // Default clear background
+
             else -> {
                 Image(
                     painter = painterResource(id = R.drawable.bg_street),
@@ -942,7 +1083,7 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                     modifier = Modifier
                         .padding(16.dp)
                         .size(60.dp)
-                        .clickable { navController?.popBackStack() }
+                        .clickable { navController.popBackStack() }
                 )
 
                 val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
@@ -967,6 +1108,7 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         .clickable {
                             gameStarted = true
                             currentStep = 0
+                            completedSteps = 0 // NEW: Reset progress when starting
                             carsCleared = false
                             playCarsVideo = false
                             correctAnswerTrigger = true
@@ -974,35 +1116,43 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                 )
             }
         } else {
-            // Game Screen
+            // Game Screen - FIXED: Not scrollable, progress bar beside back button
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Exit + Progress
+                // FIXED: Progress bar beside back button in same row
                 Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Image(
                         painter = painterResource(id = R.drawable.ic_back_arrow),
                         contentDescription = "Exit",
-                        modifier = Modifier.size(60.dp)
-                            .clickable { navController?.popBackStack() }
+                        modifier = Modifier
+                            .size(60.dp)
+                            .clickable {
+                                mediaPlayer?.stop()
+                                mediaPlayer?.release()
+                                navController.popBackStack()
+                            }
+                    )
+
+                    LinearProgressIndicator(
+                        // FIXED: Use completedSteps instead of currentStep for progress
+                        progress = { completedSteps / 4f }, // 4 steps to complete (0-3)
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(12.dp)
+                            .padding(horizontal = 16.dp)
                     )
                 }
 
-                LinearProgressIndicator(
-                    progress = { (currentStep + 1) / 5f },
-                    modifier = Modifier
-                        .fillMaxWidth(0.8f)
-                        .padding(top = 15.dp) // lowered
-                        .height(12.dp)
-                )
+                Spacer(Modifier.height(18.dp))
 
-                Spacer(Modifier.height(24.dp))
-
-                // Mascot
                 Image(
                     painter = painterResource(id = R.drawable.safestep_mascot),
                     contentDescription = "Mascot",
@@ -1015,18 +1165,43 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                         )
                 )
 
-                // Dialogue bubble (lighter bg)
                 Box(
-                    Modifier.padding(16.dp)
+                    Modifier
+                        .padding(16.dp)
                         .background(
-                            Color.White.copy(alpha = 0.8f), // brighter background
+                            Color.White.copy(alpha = 0.8f),
                             RoundedCornerShape(16.dp)
                         )
                         .padding(16.dp)
                 ) {
+                    // Build the text with colored keywords
+                    val dialogueText = stepDialogues[currentStep]
+                    val parts = dialogueText.split("<color>", "</color>")
+
                     Text(
-                        text = stepDialogues[currentStep],
-                        style = MaterialTheme.typography.titleLarge,
+                        buildAnnotatedString {
+                            parts.forEachIndexed { index, part ->
+                                if (index % 2 == 0) {
+                                    // Regular text
+                                    append(part)
+                                } else {
+                                    // Colored keyword
+                                    withStyle(
+                                        style = SpanStyle(
+                                            color = stepColors.getOrElse(currentStep) { Color.Black },
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 22.sp
+                                        )
+                                    ) {
+                                        append(part)
+                                    }
+                                }
+                            }
+                        },
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = 20.sp,
+                            lineHeight = 28.sp
+                        ),
                         color = Color.Black,
                         textAlign = TextAlign.Center
                     )
@@ -1038,7 +1213,9 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.fillMaxWidth().padding(16.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 ) {
                     val btns = listOf(
                         R.drawable.btn_stop to 0,
@@ -1066,36 +1243,44 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                                     contentDescription = "Step Button",
                                     modifier = Modifier
                                         .size(150.dp)
-                                        .aspectRatio(1f) // prevents distortion
+                                        .aspectRatio(1f)
                                         .graphicsLayer(
                                             scaleX = scale,
                                             scaleY = scale,
                                         )
-                                        .clickable {
+                                        .clickable(enabled = !isAudioPlaying) { // 🔒 prevent skipping
                                             pressed = true
                                             if (idx == currentStep) {
                                                 correctAnswerTrigger = true
+                                                // NEW: Update progress only when correct button is selected
+                                                completedSteps = currentStep + 1
+
                                                 if (idx == 1) {
-                                                    // LOOK step → play cars video + audio
                                                     playCarsVideo = true
                                                     mediaPlayer?.release()
                                                     mediaPlayer = MediaPlayer.create(context, waitCarsAudio)
+                                                    isAudioPlaying = true
+                                                    mediaPlayer?.setOnCompletionListener {
+                                                        isAudioPlaying = false
+                                                    }
                                                     mediaPlayer?.start()
                                                 } else if (currentStep in 0..2) {
-                                                    // STOP, LISTEN → just go next
                                                     currentStep++
                                                 } else if (currentStep == 3) {
-                                                    // CROSS step → final
                                                     mediaPlayer?.release()
-                                                    mediaPlayer = MediaPlayer.create(context, stepAudios[4]) // success audio
+                                                    mediaPlayer = MediaPlayer.create(context, stepAudios[4])
+                                                    isAudioPlaying = true
                                                     mediaPlayer?.setOnCompletionListener {
+                                                        isAudioPlaying = false
                                                         Toast.makeText(
                                                             context,
                                                             "🎉 Well done crossing safely!",
                                                             Toast.LENGTH_SHORT
                                                         ).show()
-                                                        gameStarted = false  // go back to Start screen
+                                                        featureViewModel.markCompleted(featureIndex)
+                                                        gameStarted = false
                                                         currentStep = 0
+                                                        completedSteps = 0 // NEW: Reset progress
                                                         carsCleared = false
                                                         playCarsVideo = false
                                                     }
@@ -1105,6 +1290,10 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
                                                 wrongAnswerTrigger = true
                                                 mediaPlayer?.release()
                                                 mediaPlayer = MediaPlayer.create(context, whoopsAudio)
+                                                isAudioPlaying = true
+                                                mediaPlayer?.setOnCompletionListener {
+                                                    isAudioPlaying = false
+                                                }
                                                 mediaPlayer?.start()
                                             }
                                         }
@@ -1120,10 +1309,14 @@ fun SafeStepsScreen(navController: NavHostController? = null) {
 
 /* ---------------- RESCUE DIAL FEATURE ---------------- */
 @Composable
-fun RescueDialScreen(navController: NavHostController? = null) {
+fun RescueDialScreen(
+    navController: NavHostController,
+    featureIndex: Int,
+    featureViewModel: FeatureViewModel
+) {
     val context = LocalContext.current
 
-    // TextToSpeech
+    // TextToSpeech setup
     val tts = remember {
         var ttsInstance: TextToSpeech? = null
         ttsInstance = TextToSpeech(context) { status ->
@@ -1134,20 +1327,17 @@ fun RescueDialScreen(navController: NavHostController? = null) {
         ttsInstance
     }
 
-    // Game state
-    var step by remember { mutableIntStateOf(0) } // 0=Start,1=DialPad,2=Calling
+    var step by remember { mutableIntStateOf(0) }
     var input by remember { mutableStateOf("") }
     var showVideo by remember { mutableStateOf(false) }
     var mascotShakeTrigger by remember { mutableStateOf(false) }
     var gameStarted by remember { mutableStateOf(false) }
 
-    // Tone generator
     val toneGen = remember { ToneGenerator(AudioManager.STREAM_MUSIC, 80) }
-
-    // Mascot animations
     val mascotShake = remember { Animatable(0f) }
     val mascotScale = rememberInfiniteTransition().animateFloat(
-        initialValue = 1f, targetValue = 1.05f,
+        initialValue = 1f,
+        targetValue = 1.05f,
         animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Reverse)
     )
 
@@ -1157,7 +1347,7 @@ fun RescueDialScreen(navController: NavHostController? = null) {
         2 to "Calling now..."
     )
 
-// START AUDIO LOOP
+    // Background loop audio until game starts
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     LaunchedEffect(gameStarted) {
         if (!gameStarted) {
@@ -1167,7 +1357,7 @@ fun RescueDialScreen(navController: NavHostController? = null) {
                 mediaPlayer?.start()
                 val duration = mediaPlayer?.duration ?: 0
                 delay(duration.toLong())
-                delay(500L) // optional small gap
+                delay(500L)
             }
         } else {
             mediaPlayer?.stop()
@@ -1181,52 +1371,54 @@ fun RescueDialScreen(navController: NavHostController? = null) {
         // Background
         Image(
             painter = painterResource(id = R.drawable.background),
-            contentDescription = "Background",
+            contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
 
-        // Back button
-        Image(
-            painter = painterResource(id = R.drawable.ic_back_arrow),
-            contentDescription = "Back",
-            modifier = Modifier
-                .padding(16.dp)
-                .size(60.dp)
-                .clickable {
-                    step = 0
-                    input = ""
-                    gameStarted = false
-                    navController?.popBackStack()
-                }
-        )
-
-        // START SCREEN
-        if (step == 0 && !gameStarted) {
-            val infiniteTransition = rememberInfiniteTransition()
-            val startScale by infiniteTransition.animateFloat(
-                initialValue = 1f, targetValue = 1.2f,
-                animationSpec = infiniteRepeatable(
-                    tween(1000, easing = LinearEasing),
-                    RepeatMode.Reverse
-                )
-            )
-
+        // START SCREEN (UPDATED to match other features)
+        if (!gameStarted) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // Pulsing start button
+                // Back button
+                Image(
+                    painter = painterResource(id = R.drawable.ic_back_arrow),
+                    contentDescription = "Back",
+                    modifier = Modifier
+                        .padding(16.dp)
+                        .size(60.dp)
+                        .clickable {
+                            navController.popBackStack()
+                        }
+                )
+
+                // Start button with same pulse animation as other features
+                val infiniteTransition = rememberInfiniteTransition(label = "startPulse")
+                val startScale by infiniteTransition.animateFloat(
+                    initialValue = 1f,
+                    targetValue = 1.2f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1000, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "startScale"
+                )
+
                 Image(
                     painter = painterResource(id = R.drawable.ic_start),
                     contentDescription = "Start",
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .size(250.dp)
-                        .graphicsLayer(scaleX = startScale, scaleY = startScale)
+                        .size(300.dp) // Same size as other features
+                        .graphicsLayer(
+                            scaleX = startScale,
+                            scaleY = startScale
+                        )
                         .clickable {
                             gameStarted = true
                             step = 1
                             input = ""
                             tts.speak(
-                                "Let's practice calling emergency numbers!",
+                                "Tap the numbers to dial 911!",
                                 TextToSpeech.QUEUE_FLUSH,
                                 null,
                                 UUID.randomUUID().toString()
@@ -1234,151 +1426,471 @@ fun RescueDialScreen(navController: NavHostController? = null) {
                         }
                 )
             }
-        }
-
-        // DIAL PAD
-        if (step == 1) {
-            LaunchedEffect(mascotShakeTrigger) {
-                if (mascotShakeTrigger) {
-                    mascotShake.snapTo(0f)
-                    mascotShake.animateTo(15f, tween(100))
-                    mascotShake.animateTo(-15f, tween(100))
-                    mascotShake.animateTo(0f, tween(100))
-                    mascotShakeTrigger = false
-                }
-            }
-
-            Column(
+        } else {
+            // Back button for game screen
+            Image(
+                painter = painterResource(id = R.drawable.ic_back_arrow),
+                contentDescription = "Back",
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                // Mascot + dialogue
-                Image(
-                    painter = painterResource(id = R.drawable.buddy),
-                    contentDescription = "Mascot",
-                    modifier = Modifier
-                        .size(200.dp)
-                        .graphicsLayer(
-                            scaleX = mascotScale.value,
-                            scaleY = mascotScale.value,
-                            rotationZ = mascotShake.value
-                        )
-                )
-                Box(
-                    Modifier
-                        .padding(16.dp)
-                        .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = stepDialogues[step] ?: "",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = Color.Black,
-                        textAlign = TextAlign.Center
-                    )
+                    .padding(16.dp)
+                    .size(60.dp)
+                    .clickable {
+                        step = 0
+                        input = ""
+                        gameStarted = false
+                        navController.popBackStack()
+                    }
+            )
+
+            // DIAL PAD SCREEN
+            if (step == 1) {
+                LaunchedEffect(mascotShakeTrigger) {
+                    if (mascotShakeTrigger) {
+                        mascotShake.snapTo(0f)
+                        mascotShake.animateTo(15f, tween(100))
+                        mascotShake.animateTo(-15f, tween(100))
+                        mascotShake.animateTo(0f, tween(100))
+                        mascotShakeTrigger = false
+                    }
                 }
-
-                // Input display
-                Text(
-                    text = input.ifEmpty { "Tap numbers..." },
-                    fontSize = 36.sp,
-                    color = Color.White
-                )
-
-                // Dial pad
-                val rows = listOf(
-                    listOf('1','2','3'),
-                    listOf('4','5','6'),
-                    listOf('7','8','9'),
-                    listOf('*','0','#')
-                )
 
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    rows.forEach { row ->
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                    // Mascot with breathing animation
+                    Image(
+                        painter = painterResource(id = R.drawable.buddy),
+                        contentDescription = "Mascot",
+                        modifier = Modifier
+                            .size(180.dp)
+                            .graphicsLayer(
+                                scaleX = mascotScale.value,
+                                scaleY = mascotScale.value,
+                                rotationZ = mascotShake.value
+                            )
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Dialogue box
+                    Box(
+                        modifier = Modifier
+                            .background(Color.White.copy(alpha = 0.8f), RoundedCornerShape(16.dp))
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = stepDialogues[step] ?: "",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.Black,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Input display
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(60.dp)
+                            .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = input.ifEmpty { "Tap numbers..." },
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // HARD-CODED NUMPAD CONTAINER
+                    Box(
+                        modifier = Modifier
+                            .width(280.dp) // Fixed width
+                            .height(360.dp) // Fixed height
+                            .background(Color(0xCC1A1A1A), RoundedCornerShape(20.dp))
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val rows = listOf(
+                            listOf('1', '2', '3'),
+                            listOf('4', '5', '6'),
+                            listOf('7', '8', '9'),
+                            listOf('*', '0', '#')
+                        )
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            row.forEach { digit ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(70.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF3A3A3A))
-                                        .clickable {
-                                            if (input.length < 3) {
-                                                input += digit
-                                                toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
-                                                tts.speak(digit.toString(), TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
+                            rows.forEach { row ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    Text(
-                                        text = digit.toString(),
-                                        fontSize = 26.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
+                                    row.forEach { digit ->
+                                        var pressed by remember { mutableStateOf(false) }
+                                        val scale by animateFloatAsState(
+                                            targetValue = if (pressed) 0.9f else 1f,
+                                            animationSpec = tween(150)
+                                        )
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(70.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF3A3A3A))
+                                                .graphicsLayer { scaleX = scale; scaleY = scale }
+                                                .clickable {
+                                                    pressed = true
+                                                    if (input.length < 3) {
+                                                        input += digit
+                                                        toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
+                                                        tts.speak(
+                                                            digit.toString(),
+                                                            TextToSpeech.QUEUE_FLUSH,
+                                                            null,
+                                                            UUID.randomUUID().toString()
+                                                        )
+                                                    }
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = digit.toString(),
+                                                fontSize = 26.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                // Call button
-                Image(
-                    painter = painterResource(id = R.drawable.dial_button),
-                    contentDescription = "Call",
-                    modifier = Modifier
-                        .size(200.dp)
-                        .align(Alignment.CenterHorizontally)
-                        .clickable {
-                            if (input == "911") {
-                                step = 2
-                                showVideo = true
-                            } else if (input.length == 3) {
-                                mascotShakeTrigger = true
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // ICON-BASED CALL BUTTON (no PNG needed)
+                    var callButtonPressed by remember { mutableStateOf(false) }
+                    val callButtonScale by animateFloatAsState(
+                        targetValue = if (callButtonPressed) 0.95f else 1f,
+                        animationSpec = tween(150)
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (input == "911") Color(0xFF4CAF50) else Color(0xFFF44336),
+                                shape = CircleShape
+                            )
+                            .shadow(8.dp, CircleShape)
+                            .graphicsLayer { scaleX = callButtonScale; scaleY = callButtonScale }
+                            .clickable {
+                                callButtonPressed = true
+                                if (input == "911") {
+                                    step = 2
+                                    showVideo = true
+                                } else if (input.length == 3) {
+                                    mascotShakeTrigger = true
+                                    input = ""
+                                    tts.speak("Try again!", TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = "Call 911",
+                            modifier = Modifier.size(50.dp),
+                            tint = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Call button instruction
+                    Text(
+                        text = if (input == "911") "Tap to call emergency!" else "Dial 911 first",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Video after correct call
+            if (step == 2 && showVideo) {
+                AndroidView(
+                    factory = {
+                        VideoView(context).apply {
+                            setVideoURI("android.resource://${context.packageName}/${R.raw.call_sequence}".toUri())
+                            setOnCompletionListener {
+                                step = 0
                                 input = ""
-                                tts.speak("Try again!", TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+                                gameStarted = false
+                                showVideo = false
+                                Toast.makeText(context, "Well done! You called help!", Toast.LENGTH_SHORT).show()
+                                featureViewModel.markCompleted(featureIndex)
                             }
+                            start()
                         }
+                    },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
-        }
-
-        // FULL SCREEN VIDEO
-        if (step == 2 && showVideo) {
-            AndroidView(
-                factory = {
-                    VideoView(context).apply {
-                        setVideoURI("android.resource://${context.packageName}/${R.raw.call_sequence}".toUri())
-                        setOnCompletionListener {
-                            step = 0
-                            input = ""
-                            gameStarted = false
-                            showVideo = false
-                            Toast.makeText(context, "Well done! You called help!", Toast.LENGTH_SHORT).show()
-                            tts.speak("Well done! You called help!", TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
-                        }
-                        start()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
         }
     }
 }
 
 
+/* ---------------- AVATAR FEATURE ---------------- */
+@Composable
+fun AvatarScreen(navController: NavHostController? = null) {
+    val avatars = listOf(R.drawable.avatar1, R.drawable.avatar2, R.drawable.avatar3)
+    var selectedAvatar by remember { mutableIntStateOf(avatars[0]) }
 
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFE6F7FF))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Select a character", fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(24.dp))
+        Image(painter = painterResource(selectedAvatar), contentDescription = "Selected Avatar",
+            modifier = Modifier.size(160.dp).clip(RoundedCornerShape(100.dp))
+        )
+        Spacer(Modifier.height(24.dp))
 
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            avatars.forEach { avatar ->
+                val isSelected = avatar == selectedAvatar
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    border = if (isSelected) BorderStroke(3.dp, Color.Red) else BorderStroke(2.dp, Color.Gray),
+                    modifier = Modifier
+                        .size(90.dp)
+                        .clickable { selectedAvatar = avatar }
+                ) {
+                    Image(painter = painterResource(avatar), contentDescription = "Avatar Option", modifier = Modifier.padding(8.dp))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(32.dp))
+
+        Button(
+            onClick = {
+                // Go back to the previous screen (main dashboard)
+                navController?.popBackStack()
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFE0E0)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.width(200.dp).height(56.dp)
+        ) {
+            Text("Select", fontSize = 20.sp, color = Color.Red, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/* ---------------- PARENT DASHBOARD FEATURE ---------------- */
+@Composable
+fun ParentDashboardScreen(
+    featureViewModel: FeatureViewModel,
+    navController: NavHostController,
+    parentPin: String = "1234"
+) {
+    val features = featureViewModel.features
+    val total = (features.size).coerceAtLeast(1)
+    val completedCount = features.count { it.completed }
+
+    var isAuthenticated by remember { mutableStateOf(false) }
+    var enteredPin by remember { mutableStateOf("") }
+    var pinError by remember { mutableStateOf(false) }
+
+    // 🔒 Show PIN first
+    if (!isAuthenticated) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Parent Access") },
+            text = {
+                Column {
+                    Text("Enter the parent PIN to access the dashboard.")
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = enteredPin,
+                        onValueChange = {
+                            enteredPin = it.filter { ch -> ch.isDigit() }.take(6)
+                            pinError = false
+                        },
+                        placeholder = { Text("PIN") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation()
+                    )
+                    if (pinError) {
+                        Text(
+                            "Incorrect PIN",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (enteredPin == parentPin) {
+                        isAuthenticated = true
+                        enteredPin = ""
+                    } else pinError = true
+                }) {
+                    Text("Confirm")
+                }
+            }
+        )
+    } else {
+        // ✅ Main dashboard content
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFFEFF6FF))
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Parent Dashboard",
+                fontSize = 28.sp,
+                style = MaterialTheme.typography.titleLarge
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            LinearProgressIndicator(
+                progress = { completedCount / total.toFloat() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+                color = ProgressIndicatorDefaults.linearColor,
+                trackColor = ProgressIndicatorDefaults.linearTrackColor
+            )
+
+           // Find most and least played features
+            Spacer(Modifier.height(16.dp))
+
+            val mostPlayedEntry = features.withIndex().maxByOrNull { it.value.playCount }
+            val leastPlayedEntry = features.withIndex().minByOrNull { it.value.playCount }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Activity Summary",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1565C0)
+                    )
+
+                    if (features.isNotEmpty()) {
+                        // Most played
+                        if (mostPlayedEntry != null) {
+                            val idx = mostPlayedEntry.index
+                            val f = mostPlayedEntry.value
+                            Text("🎯 Most Played: Feature ${idx + 1} (${f.playCount} plays)")
+                        }
+
+                        // Least played
+                        if (leastPlayedEntry != null) {
+                            val idx = leastPlayedEntry.index
+                            val f = leastPlayedEntry.value
+                            Text("🕹️ Least Played: Feature ${idx + 1} (${f.playCount} plays)")
+                        }
+                    } else {
+                        Text("No data available yet.", fontStyle = FontStyle.Italic, color = Color.Gray)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Text("$completedCount of $total features completed", color = Color.Gray)
+
+            Spacer(Modifier.height(24.dp))
+
+            // 🔹 Feature list
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                features.forEachIndexed { index, feature ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        elevation = CardDefaults.cardElevation(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Feature ${index + 1}",
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Played ${feature.playCount} times",
+                                    fontSize = 14.sp,
+                                    color = Color.Gray
+                                )
+                            }
+
+                            // ✅ Small status badge
+                            val statusColor =
+                                if (feature.completed) Color(0xFF4CAF50) else Color(0xFFFFA726)
+                            Box(
+                                modifier = Modifier
+                                    .background(statusColor, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    if (feature.completed) "Completed" else "In Progress",
+                                    color = Color.White,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            Button(onClick = { navController.popBackStack() }) {
+                Text("Back to Main")
+            }
+        }
+    }
+}
 
 
 
